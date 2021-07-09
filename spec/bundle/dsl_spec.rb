@@ -9,7 +9,7 @@ describe Bundle::Dsl do
         # frozen_string_literal: true
         cask_args appdir: '/Applications'
         tap 'homebrew/cask'
-        tap 'telemachus/brew', 'https://telemachus@bitbucket.org/telemachus/brew.git', pin: true
+        tap 'telemachus/brew', 'https://telemachus@bitbucket.org/telemachus/brew.git'
         brew 'imagemagick'
         brew 'mysql@5.6', restart_service: true, link: true, conflicts_with: ['mysql']
         brew 'emacs', args: ['with-cocoa', 'with-gnutls']
@@ -17,20 +17,23 @@ describe Bundle::Dsl do
         cask 'java' unless system '/usr/libexec/java_home --failfast'
         cask 'firefox', args: { appdir: '~/my-apps/Applications' }
         mas '1Password', id: 443987910
+        whalebrew 'whalebrew/wget'
       EOS
     end
 
     before do
-      allow_any_instance_of(described_class).to receive(:system).with("/usr/libexec/java_home --failfast").and_return(false)
-      allow(ARGV).to receive(:verbose?).and_return(true)
+      allow_any_instance_of(described_class).to receive(:system)
+        .with("/usr/libexec/java_home --failfast")
+        .and_return(false)
     end
 
-    it "processes input" do # rubocop:disable RSpec/ExampleLength # easier to keep sync'd
+    it "processes input" do
       # Keep in sync with the README
       expect(dsl.cask_arguments).to eql(appdir: "/Applications")
       expect(dsl.entries[0].name).to eql("homebrew/cask")
       expect(dsl.entries[1].name).to eql("telemachus/brew")
-      expect(dsl.entries[1].options).to eql(clone_target: "https://telemachus@bitbucket.org/telemachus/brew.git", pin: true)
+      expect(dsl.entries[1].options).to \
+        eql(clone_target: "https://telemachus@bitbucket.org/telemachus/brew.git")
       expect(dsl.entries[2].name).to eql("imagemagick")
       expect(dsl.entries[3].name).to eql("mysql@5.6")
       expect(dsl.entries[3].options).to eql(restart_service: true, link: true, conflicts_with: ["mysql"])
@@ -39,17 +42,14 @@ describe Bundle::Dsl do
       expect(dsl.entries[5].name).to eql("google-chrome")
       expect(dsl.entries[6].name).to eql("java")
       expect(dsl.entries[7].name).to eql("firefox")
-      expect(dsl.entries[7].options).to eql(args: { appdir: "~/my-apps/Applications" })
+      expect(dsl.entries[7].options).to eql(args: { appdir: "~/my-apps/Applications" }, full_name: "firefox")
       expect(dsl.entries[8].name).to eql("1Password")
       expect(dsl.entries[8].options).to eql(id: 443_987_910)
+      expect(dsl.entries[9].name).to eql("whalebrew/wget")
     end
   end
 
   context "with invalid input" do
-    before do
-      allow(ARGV).to receive(:verbose?).and_return(true)
-    end
-
     it "handles completely invalid code" do
       expect { described_class.new "abcdef" }.to raise_error(RuntimeError)
     end
@@ -78,6 +78,12 @@ describe Bundle::Dsl do
   it ".sanitize_tap_name" do
     expect(described_class.send(:sanitize_tap_name, "homebrew/homebrew-foo")).to eql("homebrew/foo")
     expect(described_class.send(:sanitize_tap_name, "homebrew/foo")).to eql("homebrew/foo")
+  end
+
+  it ".sanitize_cask_name" do
+    allow_any_instance_of(Object).to receive(:opoo)
+    expect(described_class.send(:sanitize_cask_name, "homebrew/cask-versions/adoptopenjdk8")).to eql("adoptopenjdk8")
+    expect(described_class.send(:sanitize_cask_name, "adoptopenjdk8")).to eql("adoptopenjdk8")
   end
 
   it ".pluralize_dependency" do

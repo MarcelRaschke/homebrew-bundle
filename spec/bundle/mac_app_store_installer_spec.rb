@@ -7,13 +7,13 @@ describe Bundle::MacAppStoreInstaller do
     Bundle::MacAppStoreInstaller.install("foo", 123)
   end
 
-  context ".installed_app_ids" do
+  describe ".installed_app_ids" do
     it "shells out" do
       described_class.installed_app_ids
     end
   end
 
-  context ".app_id_installed_and_up_to_date?" do
+  describe ".app_id_installed_and_up_to_date?" do
     it "returns result" do
       allow(described_class).to receive(:installed_app_ids).and_return([123, 456])
       allow(described_class).to receive(:outdated_app_ids).and_return([456])
@@ -25,15 +25,14 @@ describe Bundle::MacAppStoreInstaller do
   context "when mas is not installed" do
     before do
       allow(Bundle).to receive(:mas_installed?).and_return(false)
-      allow(ARGV).to receive(:verbose?).and_return(false)
     end
 
     it "tries to install mas" do
-      expect(Bundle).to receive(:system).with("brew", "install", "mas").and_return(true)
+      expect(Bundle).to receive(:system).with(HOMEBREW_BREW_FILE, "install", "mas", verbose: false).and_return(true)
       expect { do_install }.to raise_error(RuntimeError)
     end
 
-    context ".outdated_app_ids" do
+    describe ".outdated_app_ids" do
       it "does not shell out" do
         expect(described_class).not_to receive(:`)
         described_class.reset!
@@ -45,10 +44,9 @@ describe Bundle::MacAppStoreInstaller do
   context "when mas is installed" do
     before do
       allow(Bundle).to receive(:mas_installed?).and_return(true)
-      allow(ARGV).to receive(:verbose?).and_return(false)
     end
 
-    context ".outdated_app_ids" do
+    describe ".outdated_app_ids" do
       it "returns app ids" do
         expect(described_class).to receive(:`).and_return("foo 123")
         described_class.reset!
@@ -57,13 +55,10 @@ describe Bundle::MacAppStoreInstaller do
     end
 
     context "when mas is not signed in" do
-      before do
-        allow(ARGV).to receive(:verbose?).and_return(false)
-      end
-
-      it "tries to sign in with mas" do
-        expect(Kernel).to receive(:system).with("mas account &>/dev/null").and_return(false).twice
-        expect(Bundle).to receive(:system).with("mas", "signin", "--dialog", "").and_return(true)
+      it "outputs an error" do
+        allow(described_class).to receive(:installed_app_ids).and_return([123])
+        allow(described_class).to receive(:outdated_app_ids).and_return([123])
+        expect(Kernel).to receive(:system).with("mas account &>/dev/null").and_return(false)
         expect { do_install }.to raise_error(RuntimeError)
       end
     end
@@ -71,7 +66,6 @@ describe Bundle::MacAppStoreInstaller do
     context "when mas is signed in" do
       before do
         allow(Bundle).to receive(:mas_signedin?).and_return(true)
-        allow(ARGV).to receive(:verbose?).and_return(false)
         allow(described_class).to receive(:outdated_app_ids).and_return([])
       end
 
@@ -93,7 +87,7 @@ describe Bundle::MacAppStoreInstaller do
         end
 
         it "upgrades" do
-          expect(Bundle).to receive(:system).with("mas", "upgrade", "123").and_return(true)
+          expect(Bundle).to receive(:system).with("mas", "upgrade", "123", verbose: false).and_return(true)
           expect(do_install).to be(:success)
         end
       end
@@ -104,7 +98,7 @@ describe Bundle::MacAppStoreInstaller do
         end
 
         it "installs app" do
-          expect(Bundle).to receive(:system).with("mas", "install", "123").and_return(true)
+          expect(Bundle).to receive(:system).with("mas", "install", "123", verbose: false).and_return(true)
           expect(do_install).to be(:success)
         end
       end

@@ -8,8 +8,8 @@ module Bundle
       @pinned_formulae = nil
     end
 
-    def self.install(name, options = {})
-      new(name, options).run
+    def self.install(name, no_upgrade: false, verbose: false, **options)
+      new(name, options).run(no_upgrade: no_upgrade, verbose: verbose)
     end
 
     def initialize(name, options = {})
@@ -23,20 +23,22 @@ module Bundle
       @changed = nil
     end
 
-    def run
-      install_result = install_change_state!
-      service_change_state! if install_result != :failed
-      link_change_state! unless @link.nil?
+    def run(no_upgrade: false, verbose: false)
+      install_result = install_change_state!(no_upgrade: no_upgrade, verbose: verbose)
+      service_change_state!(verbose: verbose) if install_result != :failed
+      link_change_state!(verbose: verbose)
       install_result
     end
 
-    def install_change_state!
-      return :failed unless resolve_conflicts!
+    def install_change_state!(no_upgrade:, verbose:)
+      return :failed unless resolve_conflicts!(verbose: verbose)
+
       if installed?
-        return :skipped if ARGV.include?("--no-upgrade")
-        upgrade!
+        return :skipped if no_upgrade
+
+        upgrade!(verbose: verbose)
       else
-        install!
+        install!(verbose: verbose)
       end
     end
 
@@ -50,6 +52,7 @@ module Bundle
 
     def restart_service_needed?
       return false unless restart_service?
+
       # Restart if `restart_service: :always`, or if the formula was installed or upgraded
       @restart_service.to_s != "changed" || changed?
     end
@@ -58,29 +61,42 @@ module Bundle
       !@changed.nil?
     end
 
-    def service_change_state!
+    def service_change_state!(verbose:)
       if restart_service_needed?
-        puts "Restarting #{@name} service." if ARGV.verbose?
-        BrewServices.restart(@full_name)
+        puts "Restarting #{@name} service." if verbose
+        BrewServices.restart(@full_name, verbose: verbose)
       else
         true
       end
     end
 
-    def link_change_state!
+    def link_change_state!(verbose: false)
       case @link
       when true
-        puts "Force linking #{@name} formula." if ARGV.verbose?
-        Bundle.system("brew", "link", "--force", @name)
+        unless linked_and_keg_only?
+          puts "Force-linking #{@name} formula." if verbose
+          Bundle.system(HOMEBREW_BREW_FILE, "link", "--force", @name, verbose: verbose)
+        end
       when false
-        puts "Unlinking #{@name} formula." if ARGV.verbose?
-        Bundle.system("brew", "unlink", @name)
+        unless unlinked_and_not_keg_only?
+          puts "Unlinking #{@name} formula." if verbose
+          Bundle.system(HOMEBREW_BREW_FILE, "unlink", @name, verbose: verbose)
+        end
+      when nil
+        if unlinked_and_not_keg_only?
+          puts "Linking #{@name} formula." if verbose
+          Bundle.system(HOMEBREW_BREW_FILE, "link", @name, verbose: verbose)
+        elsif linked_and_keg_only?
+          puts "Unlinking #{@name} formula." if verbose
+          Bundle.system(HOMEBREW_BREW_FILE, "unlink", @name, verbose: verbose)
+        end
       end
     end
 
-    def self.formula_installed_and_up_to_date?(formula)
+    def self.formula_installed_and_up_to_date?(formula, no_upgrade: false)
       return false unless formula_installed?(formula)
-      return true if ARGV.include?("--no-upgrade")
+      return true if no_upgrade
+
       !formula_upgradable?(formula)
     end
 
@@ -105,12 +121,21 @@ module Bundle
       formula_in_array?(formula, installed_formulae)
     end
 
+    def self.formula_linked_and_keg_only?(formula)
+      formula_in_array?(formula, linked_and_keg_only_formulae)
+    end
+
+    def self.formula_unlinked_and_not_keg_only?(formula)
+      formula_in_array?(formula, unlinked_and_not_keg_only_formulae)
+    end
+
     def self.formula_upgradable?(formula)
-      formula_in_array?(formula, upgradable_formulae)
+      # Check local cache first and then authoratitive Homebrew source.
+      formula_in_array?(formula, upgradable_formulae) && Formula[formula].outdated?
     end
 
     def self.installed_formulae
-      @installed_formulae ||= Bundle::BrewDumper.formula_names
+      @installed_formulae ||= Bundle::BrewDumper.formulae.map { |f| f[:name] }
     end
 
     def self.upgradable_formulae
@@ -118,17 +143,37 @@ module Bundle
     end
 
     def self.outdated_formulae
-      @outdated_formulae ||= Bundle::BrewDumper.formulae.map { |f| f[:name] if f[:outdated?] }.compact
+      @outdated_formulae ||= formulae.map { |f| f[:name] if f[:outdated?] }.compact
     end
 
     def self.pinned_formulae
-      @pinned_formulae ||= Bundle::BrewDumper.formulae.map { |f| f[:name] if f[:pinned?] }.compact
+      @pinned_formulae ||= formulae.map { |f| f[:name] if f[:pinned?] }.compact
+    end
+
+    def self.linked_and_keg_only_formulae
+      @linked_and_keg_only_formulae ||= formulae.map { |f| f[:name] if f[:link?] == true }.compact
+    end
+
+    def self.unlinked_and_not_keg_only_formulae
+      @unlinked_and_not_keg_only_formulae ||= formulae.map { |f| f[:name] if f[:link?] == false }.compact
+    end
+
+    def self.formulae
+      Bundle::BrewDumper.formulae
     end
 
     private
 
     def installed?
       BrewInstaller.formula_installed?(@name)
+    end
+
+    def linked_and_keg_only?
+      BrewInstaller.formula_linked_and_keg_only?(@name)
+    end
+
+    def unlinked_and_not_keg_only?
+      BrewInstaller.formula_unlinked_and_not_keg_only?(@name)
     end
 
     def upgradable?
@@ -140,38 +185,39 @@ module Bundle
         conflicts_with = Set.new
         conflicts_with += @conflicts_with_arg
 
-        if (formula_info = Bundle::BrewDumper.formula_info(@full_name))
-          if (formula_conflicts_with = formula_info[:conflicts_with])
-            conflicts_with += formula_conflicts_with
-          end
+        if (formula = Bundle::BrewDumper.formulae_by_full_name(@full_name)) &&
+           (formula_conflicts_with = formula[:conflicts_with])
+          conflicts_with += formula_conflicts_with
         end
 
         conflicts_with.to_a
       end
     end
 
-    def resolve_conflicts!
+    def resolve_conflicts!(verbose:)
       conflicts_with.each do |conflict|
         next unless BrewInstaller.formula_installed?(conflict)
-        if ARGV.verbose?
+
+        if verbose
           puts <<~EOS
             Unlinking #{conflict} formula.
             It is currently installed and conflicts with #{@name}.
           EOS
         end
-        return false unless Bundle.system("brew", "unlink", conflict)
+        return false unless Bundle.system(HOMEBREW_BREW_FILE, "unlink", conflict, verbose: verbose)
+
         if @restart_service
-          puts "Stopping #{conflict} service (if it is running)." if ARGV.verbose?
-          BrewServices.stop(conflict)
+          puts "Stopping #{conflict} service (if it is running)." if verbose
+          BrewServices.stop(conflict, verbose: verbose)
         end
       end
 
       true
     end
 
-    def install!
-      puts "Installing #{@name} formula. It is not currently installed." if ARGV.verbose?
-      unless Bundle.system("brew", "install", @full_name, *@args)
+    def install!(verbose:)
+      puts "Installing #{@name} formula. It is not currently installed." if verbose
+      unless Bundle.system(HOMEBREW_BREW_FILE, "install", "--formula", @full_name, *@args, verbose: verbose)
         @changed = nil
         return :failed
       end
@@ -181,15 +227,15 @@ module Bundle
       :success
     end
 
-    def upgrade!
+    def upgrade!(verbose:)
       unless upgradable?
-        puts "Skipping install of #{@name} formula. It is already up-to-date." if ARGV.verbose?
+        puts "Skipping install of #{@name} formula. It is already up-to-date." if verbose
         @changed = nil
         return :skipped
       end
 
-      puts "Upgrading #{@name} formula. It is installed but not up-to-date." if ARGV.verbose?
-      unless Bundle.system("brew", "upgrade", @name)
+      puts "Upgrading #{@name} formula. It is installed but not up-to-date." if verbose
+      unless Bundle.system(HOMEBREW_BREW_FILE, "upgrade", "--formula", @name, verbose: verbose)
         @changed = nil
         return :failed
       end

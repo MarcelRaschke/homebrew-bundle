@@ -7,35 +7,34 @@ module Bundle
   module Dumper
     module_function
 
-    def can_write_to_brewfile?(brewfile_path)
-      raise "#{brewfile_path} already exists" if should_not_write_file?(brewfile_path, ARGV.force?)
+    def can_write_to_brewfile?(brewfile_path, force: false)
+      raise "#{brewfile_path} already exists" if should_not_write_file?(brewfile_path, overwrite: force)
+
       true
     end
 
-    def build_brewfile
+    def build_brewfile(describe: false, no_restart: false)
       content = []
       content << TapDumper.dump
-      casks_required_by_formulae = BrewDumper.cask_requirements
-      cask_before_formula, cask_after_formula = CaskDumper.dump(casks_required_by_formulae)
-      content << cask_before_formula
-      content << BrewDumper.dump
-      content << cask_after_formula
+      content << BrewDumper.dump(describe: describe, no_restart: no_restart)
+      content << CaskDumper.dump(describe: describe)
       content << MacAppStoreDumper.dump
-      content = content.reject(&:empty?).join("\n") + "\n"
-      content
+      content << WhalebrewDumper.dump
+      "#{content.reject(&:empty?).join("\n")}\n"
     end
 
-    def dump_brewfile
-      can_write_to_brewfile? brewfile_path
-      content = build_brewfile
-      write_file brewfile_path, content
+    def dump_brewfile(global: false, file: nil, describe: false, force: false, no_restart: false)
+      path = brewfile_path(global: global, file: file)
+      can_write_to_brewfile?(path, force: force)
+      content = build_brewfile(describe: describe, no_restart: no_restart)
+      write_file path, content
     end
 
-    def brewfile_path
-      Brewfile.path
+    def brewfile_path(global: false, file: nil)
+      Brewfile.path(dash_writes_to_stdout: true, global: global, file: file)
     end
 
-    def should_not_write_file?(file, overwrite = false)
+    def should_not_write_file?(file, overwrite: false)
       file.exist? && !overwrite && file.to_s != "/dev/stdout"
     end
 

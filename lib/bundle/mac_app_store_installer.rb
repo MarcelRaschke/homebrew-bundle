@@ -11,45 +11,42 @@ module Bundle
       @outdated_app_ids = nil
     end
 
-    def install(name, id)
+    def install(name, id, no_upgrade: false, verbose: false)
       unless Bundle.mas_installed?
-        puts "Installing mas. It is not currently installed." if ARGV.verbose?
-        Bundle.system "brew", "install", "mas"
-        unless Bundle.mas_installed?
-          raise "Unable to install #{name} app. mas installation failed."
-        end
+        puts "Installing mas. It is not currently installed." if verbose
+        Bundle.system HOMEBREW_BREW_FILE, "install", "mas", verbose: verbose
+        raise "Unable to install #{name} app. mas installation failed." unless Bundle.mas_installed?
       end
 
       if app_id_installed?(id) &&
-         (ARGV.include?("--no-upgrade") || !app_id_upgradable?(id))
+         (no_upgrade || !app_id_upgradable?(id))
         return :skipped
       end
 
       unless Bundle.mas_signedin?
-        puts "Not signed in to Mac App Store." if ARGV.verbose?
-        Bundle.system "mas", "signin", "--dialog", "" if MacOS.version < :mojave
-        unless Bundle.mas_signedin?
-          raise "Unable to install #{name} app. mas not signed in to Mac App Store."
-        end
+        puts "Not signed in to Mac App Store." if verbose
+        raise "Unable to install #{name} app. mas not signed in to Mac App Store."
       end
 
       if app_id_installed?(id)
-        puts "Upgrading #{name} app. It is installed but not up-to-date." if ARGV.verbose?
-        return :failed unless Bundle.system "mas", "upgrade", id.to_s
+        puts "Upgrading #{name} app. It is installed but not up-to-date." if verbose
+        return :failed unless Bundle.system "mas", "upgrade", id.to_s, verbose: verbose
+
         return :success
       end
 
-      puts "Installing #{name} app. It is not currently installed." if ARGV.verbose?
+      puts "Installing #{name} app. It is not currently installed." if verbose
 
-      return :failed unless Bundle.system "mas", "install", id.to_s
+      return :failed unless Bundle.system "mas", "install", id.to_s, verbose: verbose
 
       installed_app_ids << id
       :success
     end
 
-    def self.app_id_installed_and_up_to_date?(id)
+    def self.app_id_installed_and_up_to_date?(id, no_upgrade: false)
       return false unless app_id_installed?(id)
-      return true if ARGV.include?("--no-upgrade")
+      return true if no_upgrade
+
       !app_id_upgradable?(id)
     end
 

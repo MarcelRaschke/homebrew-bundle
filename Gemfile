@@ -1,9 +1,10 @@
+# frozen_string_literal: true
+
 source "https://rubygems.org"
 
 group :test do
-  gem "guard-rspec"
-  gem "guard-rubocop"
-  gem "rake"
+  gem "activesupport"
   gem "rspec"
-  gem "simplecov"
+  gem "simplecov", require: false
+  gem "simplecov-cobertura", require: false
 end

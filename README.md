@@ -1,122 +1,56 @@
 # Homebrew Bundle
 
-Bundler for non-Ruby dependencies from Homebrew.
-
-[![Azure Pipelines](https://img.shields.io/vso/build/Homebrew/56a87eb4-3180-495a-9117-5ed6c79da737/5.svg)](https://dev.azure.com/Homebrew/Homebrew/_build/latest?definitionId=5)
+Bundler for non-Ruby dependencies from Homebrew, Homebrew Cask, Mac App Store and Whalebrew.
 
 ## Requirements
 
-[Homebrew](https://github.com/Homebrew/brew) or [Linuxbrew](https://github.com/Linuxbrew/brew) are used for installing the dependencies.
-Linuxbrew is a fork of Homebrew for Linux, while Homebrew only works on macOS.
-This tool is developed for use with Homebrew on macOS but might work with Linuxbrew (but is unsupported so don't file Linux issues, please).
+[Homebrew](https://github.com/Homebrew/brew) (on macOS or [Linux](https://docs.brew.sh/Homebrew-on-Linux)) for installing dependencies.
 
 [Homebrew Cask](https://github.com/Homebrew/homebrew-cask) is optional and used for installing Mac applications.
 
-[mas-cli](https://github.com/argon/mas) is optional and used for installing Mac App Store applications.
+[mas-cli](https://github.com/mas-cli/mas) is optional and used for installing Mac App Store applications.
+
+[Whalebrew](https://github.com/whalebrew/whalebrew) is optional and used for installing Whalebrew images.
 
 ## Installation
 
-`brew bundle` is automatically installed when run.
+`brew bundle` is automatically installed when first run.
 
 ## Usage
 
-Create a `Brewfile` in the root of your project with:
+See [the `brew bundle` section of the `brew man` output](https://docs.brew.sh/Manpage#bundle-subcommand) or `brew bundle --help`.
 
-```bash
-touch Brewfile
-```
-
-Add your dependencies in your `Brewfile`:
+An example `Brewfile`:
 
 ```ruby
-cask_args appdir: "/Applications"
+# 'brew tap'
 tap "homebrew/cask"
-tap "telemachus/brew", "https://telemachus@bitbucket.org/telemachus/brew.git", pin: true
+# 'brew tap' with custom Git URL
+tap "user/tap-repo", "https://user@bitbucket.org/user/homebrew-tap-repo.git"
+# set arguments for all 'brew install --cask' commands
+cask_args appdir: "~/Applications", require_sha: true
+
+# 'brew install'
 brew "imagemagick"
+# 'brew install --with-rmtp', 'brew services restart' on version changes
+brew "denji/nginx/nginx-full", args: ["with-rmtp"], restart_service: :changed
+# 'brew install', always 'brew services restart', 'brew link', 'brew unlink mysql' (if it is installed)
 brew "mysql@5.6", restart_service: true, link: true, conflicts_with: ["mysql"]
-brew "emacs", args: ["with-cocoa", "with-gnutls"]
+
+# 'brew install --cask'
 cask "google-chrome"
-cask "java" unless system "/usr/libexec/java_home --failfast"
+# 'brew install --cask --appdir=~/my-apps/Applications'
 cask "firefox", args: { appdir: "~/my-apps/Applications" }
+# always upgrade auto-updated or unversioned cask to latest version even if already installed
+cask "opera", greedy: true
+# 'brew install --cask' only if '/usr/libexec/java_home --failfast' fails
+cask "java" unless system "/usr/libexec/java_home --failfast"
+
+# 'mas install'
 mas "1Password", id: 443987910
-```
 
-### Install
-
-You can then easily install all of the dependencies with:
-
-```bash
-brew bundle
-```
-
-If a dependency is already installed and there is an upgrade available it will be upgraded.
-
-### Dump
-
-You can create a `Brewfile` from all the existing Homebrew packages you have installed with:
-
-```bash
-brew bundle dump
-```
-
-The `--force` option will allow an existing `Brewfile` to be overwritten as well.
-The `--describe` option will output a description comment above each line.
-
-### Cleanup
-
-You can also use `Brewfile` as a whitelist. It's useful for maintainers/testers who regularly install lots of formulae. To uninstall all Homebrew formulae not listed in `Brewfile`:
-
-```bash
-brew bundle cleanup
-```
-
-Unless the `--force` option is passed, formulae that would be uninstalled will be listed rather than actually be uninstalled.
-
-### Check
-
-You can check there's anything to install/upgrade in the `Brewfile` by running:
-
-```bash
-brew bundle check
-```
-
-This provides a successful exit code if everything is up-to-date so is useful for scripting.
-
-For a list of dependencies that are missing, pass `--verbose`. This will also check _all_ dependencies by not exiting on the first missing dependency category.
-
-### List
-
-Outputs a list of all of the entries in the Brewfile.
-
-```bash
-brew bundle list
-```
-
-Pass one of `--casks`, `--taps`, `--mas`, or `--brews` to limit output to that type. Defaults to `--brews`. Pass `--all` to see everything.
-
-Note that the _type_ of the package is **not** included in this output.
-
-### Exec
-
-Runs an external command within Homebrew's superenv build environment:
-
-```bash
-brew bundle exec -- bundle install
-```
-
-This sanitized build environment ignores unrequested dependencies, which makes sure that things you didn't specify in your `Brewfile` won't get picked up by commands like `bundle install`, `npm install`, etc. It will also add compiler flags which will help find keg-only dependencies like `openssl`, `icu4c`, etc.
-
-### Restarting services
-
-You can choose whether `brew bundle` restarts a service every time it's run, or
-only when the formula is installed or upgraded in your `Brewfile`:
-
-```ruby
-# Always restart myservice
-brew 'myservice', restart_service: true
-
-# Only restart when installing or upgrading myservice
-brew 'myservice', restart_service: :changed
+# 'whalebrew install'
+whalebrew "whalebrew/wget"
 ```
 
 ## Note
@@ -127,8 +61,8 @@ If your software needs specific versions then perhaps you'll want to look at usi
 
 ## Tests
 
-Tests can be run with `bundle && bundle exec rake spec`
+Tests can be run with `bundle install && bundle exec rspec`.
 
 ## Copyright
 
-Copyright (c) Homebrew maintainers and Andrew Nesbitt. See [LICENSE](https://github.com/Homebrew/homebrew-bundle/blob/master/LICENSE) for details.
+Copyright (c) Homebrew maintainers and Andrew Nesbitt. See [LICENSE](https://github.com/Homebrew/homebrew-bundle/blob/HEAD/LICENSE) for details.

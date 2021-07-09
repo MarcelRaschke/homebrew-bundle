@@ -8,19 +8,20 @@ module Bundle
       @started_services = nil
     end
 
-    def stop(name)
+    def stop(name, verbose: false)
       return true unless started?(name)
-      if Bundle.system "brew", "services", "stop", name
-        started_services.delete(name)
-        true
-      end
+
+      return unless Bundle.system HOMEBREW_BREW_FILE, "services", "stop", name, verbose: verbose
+
+      started_services.delete(name)
+      true
     end
 
-    def restart(name)
-      if Bundle.system "brew", "services", "restart", name
-        started_services << name
-        true
-      end
+    def restart(name, verbose: false)
+      return unless Bundle.system HOMEBREW_BREW_FILE, "services", "restart", name, verbose: verbose
+
+      started_services << name
+      true
     end
 
     def started?(name)
@@ -32,6 +33,7 @@ module Bundle
         `brew services list`.lines.map do |line|
           name, state, _plist = line.split(/\s+/)
           next if state == "stopped"
+
           name
         end.compact
       else

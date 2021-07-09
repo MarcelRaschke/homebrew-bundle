@@ -3,10 +3,9 @@
 require "spec_helper"
 
 describe Bundle::Commands::Cleanup do
-  context "read Brewfile and currently installation" do
+  describe "read Brewfile and current installation" do
     before do
       described_class.reset!
-      allow(ARGV).to receive(:value).and_return(nil)
       allow_any_instance_of(Pathname).to receive(:read).and_return <<~EOS
         tap 'x'
         tap 'y'
@@ -30,6 +29,7 @@ describe Bundle::Commands::Cleanup do
     end
 
     it "computes which formulae to uninstall" do
+      dependencies_arrays_hash = { dependencies: [], build_dependencies: [] }
       allow(Bundle::BrewDumper).to receive(:formulae).and_return [
         { name: "a2", full_name: "a2", aliases: ["a"], dependencies: ["d"] },
         { name: "c", full_name: "c" },
@@ -40,11 +40,23 @@ describe Bundle::Commands::Cleanup do
         { name: "i", full_name: "homebrew/tap/i", aliases: ["i2"] },
         { name: "hasdependency", full_name: "homebrew/tap/hasdependency", dependencies: ["isdependency"] },
         { name: "isdependency", full_name: "homebrew/tap/isdependency" },
-        { name: "hasbuilddependency1", full_name: "hasbuilddependency1", poured_from_bottle?: true, build_dependencies: ["builddependency1"] },
-        { name: "hasbuilddependency2", full_name: "hasbuilddependency2", poured_from_bottle?: false, build_dependencies: ["builddependency2"] },
+        {
+          name:                "hasbuilddependency1",
+          full_name:           "hasbuilddependency1",
+          poured_from_bottle?: true,
+          build_dependencies:  ["builddependency1"],
+        },
+        {
+          name:                "hasbuilddependency2",
+          full_name:           "hasbuilddependency2",
+          poured_from_bottle?: false,
+          build_dependencies:  ["builddependency2"],
+        },
         { name: "builddependency1", full_name: "builddependency1" },
         { name: "builddependency2", full_name: "builddependency2" },
-      ].map { |f| { dependencies: [], build_dependencies: [] }.merge(f) }
+        { name: "caskdependency", full_name: "homebrew/tap/caskdependency" },
+      ].map { |f| dependencies_arrays_hash.merge(f) }
+      allow(Bundle::CaskDumper).to receive(:formula_dependencies).and_return(%w[caskdependency])
       expect(described_class.formulae_to_uninstall).to eql %w[
         c
         homebrew/tap/e
@@ -59,94 +71,87 @@ describe Bundle::Commands::Cleanup do
     end
   end
 
-  context "no formulae to uninstall and no taps to untap" do
+  context "when there are no formulae to uninstall and no taps to untap" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return([])
       allow(described_class).to receive(:formulae_to_uninstall).and_return([])
       allow(described_class).to receive(:taps_to_untap).and_return([])
-      allow(ARGV).to receive(:force?).and_return(true)
     end
 
     it "does nothing" do
       expect(Kernel).not_to receive(:system)
       expect(described_class).to receive(:system_output_no_stderr).and_return("")
-      described_class.run
+      described_class.run(force: true)
     end
   end
 
-  context "there are casks to uninstall" do
+  context "when there are casks to uninstall" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return(%w[a b])
       allow(described_class).to receive(:formulae_to_uninstall).and_return([])
       allow(described_class).to receive(:taps_to_untap).and_return([])
-      allow(ARGV).to receive(:force?).and_return(true)
     end
 
     it "uninstalls casks" do
-      expect(Kernel).to receive(:system).with("brew", "cask", "uninstall", "--force", "a", "b")
+      expect(Kernel).to receive(:system).with(HOMEBREW_BREW_FILE, "uninstall", "--cask", "--force", "a", "b")
       expect(described_class).to receive(:system_output_no_stderr).and_return("")
-      expect { described_class.run }.to output(/Uninstalled 2 casks/).to_stdout
+      expect { described_class.run(force: true) }.to output(/Uninstalled 2 casks/).to_stdout
     end
   end
 
-  context "there are casks to zap" do
+  context "when there are casks to zap" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return(%w[a b])
       allow(described_class).to receive(:formulae_to_uninstall).and_return([])
       allow(described_class).to receive(:taps_to_untap).and_return([])
-      allow(ARGV).to receive(:force?).and_return(true)
-      allow(ARGV).to receive(:include?).with("--zap").and_return(true)
     end
 
     it "uninstalls casks" do
-      expect(Kernel).to receive(:system).with("brew", "cask", "zap", "--force", "a", "b")
+      expect(Kernel).to receive(:system).with(HOMEBREW_BREW_FILE, "uninstall", "--cask", "--zap", "--force", "a", "b")
       expect(described_class).to receive(:system_output_no_stderr).and_return("")
-      expect { described_class.run }.to output(/Uninstalled 2 casks/).to_stdout
+      expect { described_class.run(force: true, zap: true) }.to output(/Uninstalled 2 casks/).to_stdout
     end
   end
 
-  context "there are formulae to uninstall" do
+  context "when there are formulae to uninstall" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return([])
       allow(described_class).to receive(:formulae_to_uninstall).and_return(%w[a b])
       allow(described_class).to receive(:taps_to_untap).and_return([])
-      allow(ARGV).to receive(:force?).and_return(true)
     end
 
     it "uninstalls formulae" do
-      expect(Kernel).to receive(:system).with("brew", "uninstall", "--force", "a", "b")
+      expect(Kernel).to receive(:system).with(HOMEBREW_BREW_FILE, "uninstall", "--formula", "--force", "a", "b")
       expect(described_class).to receive(:system_output_no_stderr).and_return("")
-      expect { described_class.run }.to output(/Uninstalled 2 formulae/).to_stdout
+      expect { described_class.run(force: true) }.to output(/Uninstalled 2 formulae/).to_stdout
     end
   end
 
-  context "there are taps to untap" do
+  context "when there are taps to untap" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return([])
       allow(described_class).to receive(:formulae_to_uninstall).and_return([])
       allow(described_class).to receive(:taps_to_untap).and_return(%w[a b])
-      allow(ARGV).to receive(:force?).and_return(true)
     end
 
     it "untaps taps" do
-      expect(Kernel).to receive(:system).with("brew", "untap", "a", "b")
+      expect(Kernel).to receive(:system).with(HOMEBREW_BREW_FILE, "untap", "a", "b")
       expect(described_class).to receive(:system_output_no_stderr).and_return("")
-      described_class.run
+      described_class.run(force: true)
     end
   end
 
-  context "there are casks and formulae to uninstall and taps to untap but without passing `--force`" do
+  context "when there are casks and formulae to uninstall and taps to untap but without passing `--force`" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return(%w[a b])
       allow(described_class).to receive(:formulae_to_uninstall).and_return(%w[a b])
       allow(described_class).to receive(:taps_to_untap).and_return(%w[a b])
-      allow(ARGV).to receive(:force?).and_return(false)
     end
 
     it "lists casks, formulae and taps" do
@@ -157,7 +162,7 @@ describe Bundle::Commands::Cleanup do
     end
   end
 
-  context "there is brew cleanup output" do
+  context "when there is brew cleanup output" do
     before do
       described_class.reset!
       allow(described_class).to receive(:casks_to_uninstall).and_return([])
@@ -170,21 +175,13 @@ describe Bundle::Commands::Cleanup do
     end
 
     context "with --force" do
-      before do
-        allow(ARGV).to receive(:force?).and_return(true)
-      end
-
       it "prints output" do
         sane?
-        expect { described_class.run }.to output(/cleaned/).to_stdout
+        expect { described_class.run(force: true) }.to output(/cleaned/).to_stdout
       end
     end
 
     context "without --force" do
-      before do
-        allow(ARGV).to receive(:force?).and_return(false)
-      end
-
       it "prints output" do
         sane?
         expect { described_class.run }.to output(/cleaned/).to_stdout
@@ -192,7 +189,7 @@ describe Bundle::Commands::Cleanup do
     end
   end
 
-  context "#system_output_no_stderr" do
+  describe "#system_output_no_stderr" do
     it "shells out" do
       expect(IO).to receive(:popen).and_return(StringIO.new("true"))
       described_class.system_output_no_stderr("true")

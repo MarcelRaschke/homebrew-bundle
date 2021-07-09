@@ -10,6 +10,10 @@ module Bundle
         @name = name
         @options = options
       end
+
+      def to_s
+        name
+      end
     end
 
     attr_reader :entries, :cask_arguments
@@ -34,12 +38,14 @@ module Bundle
 
     def cask_args(args)
       raise "cask_args(#{args.inspect}) should be a Hash object" unless args.is_a? Hash
+
       @cask_arguments = args
     end
 
     def brew(name, options = {})
       raise "name(#{name.inspect}) should be a String object" unless name.is_a? String
       raise "options(#{options.inspect}) should be a Hash object" unless options.is_a? Hash
+
       name = Bundle::Dsl.sanitize_brew_name(name)
       @entries << Entry.new(:brew, name, options)
     end
@@ -47,6 +53,8 @@ module Bundle
     def cask(name, options = {})
       raise "name(#{name.inspect}) should be a String object" unless name.is_a? String
       raise "options(#{options.inspect}) should be a Hash object" unless options.is_a? Hash
+
+      options[:full_name] = name
       name = Bundle::Dsl.sanitize_cask_name(name)
       options[:args] = @cask_arguments.merge options.fetch(:args, {})
       @entries << Entry.new(:cask, name, options)
@@ -56,14 +64,24 @@ module Bundle
       id = options[:id]
       raise "name(#{name.inspect}) should be a String object" unless name.is_a? String
       raise "options[:id](#{id}) should be an Integer object" unless id.is_a? Integer
-      @entries << Entry.new(:mac_app_store, name, id: id)
+
+      @entries << Entry.new(:mas, name, id: id)
     end
 
-    def tap(name, clone_target = nil, pin: false)
+    def whalebrew(name)
       raise "name(#{name.inspect}) should be a String object" unless name.is_a? String
-      raise "clone_target(#{clone_target.inspect}) should be nil or a String object" if clone_target && !clone_target.is_a?(String)
+
+      @entries << Entry.new(:whalebrew, name)
+    end
+
+    def tap(name, clone_target = nil)
+      raise "name(#{name.inspect}) should be a String object" unless name.is_a? String
+      if clone_target && !clone_target.is_a?(String)
+        raise "clone_target(#{clone_target.inspect}) should be nil or a String object"
+      end
+
       name = Bundle::Dsl.sanitize_tap_name(name)
-      @entries << Entry.new(:tap, name, clone_target: clone_target, pin: pin)
+      @entries << Entry.new(:tap, name, clone_target: clone_target)
     end
 
     HOMEBREW_TAP_ARGS_REGEX = %r{^([\w-]+)/(homebrew-)?([\w-]+)$}.freeze
@@ -94,6 +112,7 @@ module Bundle
     end
 
     def self.sanitize_cask_name(name)
+      name = name.split("/").last if name.include?("/")
       name.downcase
     end
 

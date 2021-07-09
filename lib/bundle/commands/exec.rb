@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
+require "exceptions"
 require "extend/ENV"
-require "formula"
-require "formulary"
 require "utils"
 
 module Bundle
@@ -10,32 +9,30 @@ module Bundle
     module Exec
       module_function
 
-      def run
-        args = []
-        ARGV.each_with_index do |arg, i|
-          if arg == "--"
-            args = ARGV.slice!(i+1..-1)
-            break
-          elsif !arg.start_with?("-")
-            args = ARGV.slice!(i..-1)
-            break
-          end
-        end
-
+      def run(*args, global: false, file: nil)
         # Setup Homebrew's ENV extensions
         ENV.activate_extensions!
-        raise "No command to execute was specified!" if args.empty?
+        raise UsageError, "No command to execute was specified!" if args.blank?
 
-        command = args[0]
+        command = args.first
 
-        # Save the command path, since this will be blown away by superenv
-        command_path = which(command)
-        raise "Error: #{command} was not found on your PATH!" if command_path.nil?
-        command_path = command_path.dirname.to_s
+        # For commands which aren't either absolute or relative
+        if command.exclude? "/"
+          # Save the command path, since this will be blown away by superenv
+          command_path = which(command)
+          raise "command was not found in your PATH: #{command}" if command_path.blank?
 
-        brewfile = Bundle::Dsl.new(Brewfile.read)
+          command_path = command_path.dirname.to_s
+        end
+
+        brewfile = Bundle::Dsl.new(Brewfile.read(global: global, file: file))
+
+        require "formula"
+        require "formulary"
+
         ENV.deps = brewfile.entries.map do |entry|
           next unless entry.type == :brew
+
           f = Formulary.factory(entry.name)
           [f, f.recursive_dependencies.map(&:to_formula)]
         end.flatten.compact
@@ -47,12 +44,12 @@ module Bundle
 
         # Setup pkg-config, if present, to help locate packages
         pkgconfig = Formulary.factory("pkg-config")
-        ENV.prepend_path "PATH", pkgconfig.opt_bin.to_s if pkgconfig.installed?
+        ENV.prepend_path "PATH", pkgconfig.opt_bin.to_s if pkgconfig.any_version_installed?
 
-        # Ensure the Ruby path we saved goes before anything else
-        ENV.prepend_path "PATH", command_path
+        # Ensure the Ruby path we saved goes before anything else, if the command was in the PATH
+        ENV.prepend_path "PATH", command_path if command_path.present?
 
-        exec *args
+        exec(*args)
       end
     end
   end

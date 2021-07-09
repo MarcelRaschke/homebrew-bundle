@@ -5,70 +5,80 @@ require "tsort"
 
 module Bundle
   # TODO: refactor into multiple modules
-  module BrewDumper # rubocop:disable Metrics/ModuleLength
+  module BrewDumper
     module_function
 
     def reset!
       Bundle::BrewServices.reset!
       @formulae = nil
+      @formulae_by_full_name = nil
+      @formulae_by_name = nil
       @formula_aliases = nil
       @formula_oldnames = nil
     end
 
     def formulae
-      @formulae ||= begin
-        @formulae = formulae_info
-        sort!
-      end
+      return @formulae if @formulae
+
+      formulae_by_full_name
+      @formulae
     end
 
-    def dump
+    def formulae_by_full_name(name = nil)
+      return @formulae_by_full_name[name] if !name.nil? && @formulae_by_full_name&.key?(name)
+
+      require "formula"
+      require "formulary"
+      Formulary.enable_factory_cache!
+
+      @formulae_by_name ||= {}
+      @formulae_by_full_name ||= {}
+
+      if name.nil?
+        formulae = Formula.installed.map(&method(:add_formula))
+        sort!(formulae)
+        return @formulae_by_full_name
+      end
+
+      formula = Formula[name]
+      add_formula(formula)
+    rescue FormulaUnavailableError => e
+      opoo "'#{name}' formula is unreadable: #{e}"
+      {}
+    end
+
+    def formulae_by_name(name)
+      formulae_by_full_name(name) || @formulae_by_name[name]
+    end
+
+    def dump(describe: false, no_restart: false)
       requested_formula = formulae.select do |f|
         f[:installed_on_request?] || !f[:installed_as_dependency?]
       end
       requested_formula.map do |f|
-        brewline = ""
-        brewline += "# #{f[:desc]}\n" if ARGV.include?("--describe") && f[:desc]
+        brewline = if describe && f[:desc].present?
+          f[:desc].split("\n").map { |s| "# #{s}\n" }.join
+        else
+          ""
+        end
         brewline += "brew \"#{f[:full_name]}\""
+
         args = f[:args].map { |arg| "\"#{arg}\"" }.sort.join(", ")
         brewline += ", args: [#{args}]" unless f[:args].empty?
-        brewline += ", restart_service: true" if BrewServices.started?(f[:full_name])
+        brewline += ", restart_service: true" if !no_restart && BrewServices.started?(f[:full_name])
         brewline += ", link: #{f[:link?]}" unless f[:link?].nil?
         brewline
       end.join("\n")
     end
 
-    def cask_requirements
-      formulae.flat_map do |f|
-        f[:requirements].map { |req| req["cask"]&.split("/")&.last }
-      end.compact.uniq
-    end
-
-    def formula_names
-      formulae.map { |f| f[:name] }
-    end
-
-    def formula_oldnames
-      return @formula_oldnames if @formula_oldnames
-      @formula_oldnames = {}
-      formulae.each do |f|
-        oldname = f[:oldname]
-        next unless oldname
-        @formula_oldnames[oldname] = f[:full_name]
-        if f[:full_name].include? "/" # tap formula
-          tap_name = f[:full_name].rpartition("/").first
-          @formula_oldnames["#{tap_name}/#{oldname}"] = f[:full_name]
-        end
-      end
-      @formula_oldnames
-    end
-
     def formula_aliases
       return @formula_aliases if @formula_aliases
+
       @formula_aliases = {}
       formulae.each do |f|
         aliases = f[:aliases]
-        next if !aliases || aliases.empty?
+        next if aliases.blank?
+
         aliases.each do |a|
           @formula_aliases[a] = f[:full_name]
           if f[:full_name].include? "/" # tap formula
@@ -80,93 +90,97 @@ module Bundle
       @formula_aliases
     end
 
-    def formula_info(name)
-      @formula_info_name ||= {}
-      @formula_info_name[name] ||= begin
-        require "formula"
-        formula_inspector formula_hash(Formula[name])
+    def formula_oldnames
+      return @formula_oldnames if @formula_oldnames
+
+      @formula_oldnames = {}
+      formulae.each do |f|
+        oldname = f[:oldname]
+        next if oldname.blank?
+
+        @formula_oldnames[oldname] = f[:full_name]
+        if f[:full_name].include? "/" # tap formula
+          tap_name = f[:full_name].rpartition("/").first
+          @formula_oldnames["#{tap_name}/#{oldname}"] = f[:full_name]
+        end
       end
-    rescue NameError, ArgumentError, ScriptError,
-           FormulaUnavailableError => e
-      opoo "'#{name}' formula is unreadable: #{e}"
+      @formula_oldnames
     end
 
-    def formulae_info
-      require "formula"
-      Formula.installed.map do |f|
-        formula_inspector formula_hash(f)
-      end.compact
-    rescue NameError, ArgumentError, ScriptError,
-           FormulaUnavailableError => e
-      opoo "Unreadable formula: #{e}"
-    end
+    def add_formula(f)
+      hash = formula_to_hash f
 
-    def formula_hash(formula)
-      formula.to_hash
-    rescue NameError, ArgumentError, ScriptError,
-           FormulaUnavailableError => e
-      opoo "'#{formula.name}' formula is unreadable: #{e}"
-    end
+      @formulae_by_name[hash[:name]] = hash
+      @formulae_by_full_name[hash[:full_name]] = hash
 
-    def formula_inspector(formula)
-      return unless formula
-      installed = formula["installed"]
-      link = nil
-      if formula["linked_keg"].nil?
-        keg = installed.last
-        link = false unless formula["keg_only"]
+      hash
+    end
+    private_class_method :add_formula
+
+    def formula_to_hash(formula)
+      keg = if formula.linked?
+        link = true if formula.keg_only?
+        formula.linked_keg
       else
-        keg = installed.find { |k| formula["linked_keg"] == k["version"] }
-        link = true if formula["keg_only"]
+        link = false unless formula.keg_only?
+        formula.any_installed_prefix
       end
 
       if keg
-        args = keg["used_options"].to_a.map { |option| option.gsub(/^--/, "") }
-        args << "HEAD" if keg["version"].to_s.start_with?("HEAD")
-        args << "devel" if keg["version"].to_s.gsub(/_\d+$/, "") == formula["versions"]["devel"]
-        args.uniq!
-        version = keg["version"]
-        installed_as_dependency = keg["installed_as_dependency"] || false
-        installed_on_request = keg["installed_on_request"] || false
-        poured_from_bottle = keg["poured_from_bottle"] || false
-        runtime_dependencies = if deps = keg["runtime_dependencies"]
-          deps.map do |dep|
-            full_name = dep["full_name"]
-            next unless full_name
-            full_name.split("/").last
-          end.compact
+        require "tab"
+
+        tab = Tab.for_keg(keg)
+        args = tab.used_options.map(&:name)
+        version = begin
+          keg.realpath.basename
+        rescue
+          # silently handle broken symlinks
+          nil
+        end.to_s
+        args << "HEAD" if version.start_with?("HEAD")
+        installed_as_dependency = tab.installed_as_dependency
+        installed_on_request = tab.installed_on_request
+        runtime_dependencies = if (runtime_deps = tab.runtime_dependencies)
+          runtime_deps.map { |d| d["full_name"] }
+                      .compact
         end
-      else
-        args = []
-        version = nil
-        installed_as_dependency = false
-        installed_on_request = false
-        runtime_dependencies = nil
-        poured_from_bottle = false
+        poured_from_bottle = tab.poured_from_bottle
+      end
+
+      runtime_dependencies ||= formula.runtime_dependencies.map(&:name)
+
+      bottled_or_disabled = formula.bottle_disabled?
+      if !bottled_or_disabled && formula.bottle_defined?
+        bottle_hash = formula.bottle_hash.deep_symbolize_keys
+        if (bottle_files = bottle_hash[:files].presence)
+          bottled_or_disabled = bottle_files[:all].present?
+          bottled_or_disabled ||= bottle_files[Utils::Bottles.tag.to_sym].present?
+        end
       end
 
       {
-        name:                     formula["name"],
-        desc:                     formula["desc"],
-        oldname:                  formula["oldname"],
-        full_name:                formula["full_name"],
-        aliases:                  formula["aliases"],
-        args:                     args,
+        name:                     formula.name,
+        desc:                     formula.desc,
+        oldname:                  formula.oldname,
+        full_name:                formula.full_name,
+        aliases:                  formula.aliases,
+        any_version_installed?:   formula.any_version_installed?,
+        args:                     Array(args).uniq,
         version:                  version,
-        installed_as_dependency?: installed_as_dependency,
-        installed_on_request?:    installed_on_request,
-        dependencies:             (runtime_dependencies || formula["dependencies"]),
-        recommended_dependencies: formula["recommended_dependencies"],
-        optional_dependencies:    formula["optional_dependencies"],
-        build_dependencies:       formula["build_dependencies"],
-        requirements:             formula["requirements"],
-        conflicts_with:           formula["conflicts_with"],
-        pinned?:                  (formula["pinned"] || false),
-        outdated?:                (formula["outdated"] || false),
+        installed_as_dependency?: (installed_as_dependency || false),
+        installed_on_request?:    (installed_on_request || false),
+        dependencies:             runtime_dependencies,
+        build_dependencies:       formula.deps.select(&:build?).map(&:name).uniq,
+        conflicts_with:           formula.conflicts.map(&:name),
+        pinned?:                  (formula.pinned? || false),
+        outdated?:                (formula.outdated? || false),
         link?:                    link,
-        poured_from_bottle?:      poured_from_bottle,
+        poured_from_bottle?:      (poured_from_bottle || false),
+        bottle:                   (bottle_hash || false),
+        bottled_or_disabled:      (bottled_or_disabled || false),
       }
     end
+    private_class_method :formula_to_hash
 
     class Topo < Hash
       include TSort
@@ -176,13 +190,13 @@ module Bundle
       end
     end
 
-    def sort!
+    def sort!(formulae)
       # Step 1: Sort by formula full name while putting tap formulae behind core formulae.
       #         So we can have a nicer output.
-      @formulae.sort! do |a, b|
-        if !a[:full_name].include?("/") && b[:full_name].include?("/")
+      formulae = formulae.sort do |a, b|
+        if a[:full_name].exclude?("/") && b[:full_name].include?("/")
           -1
-        elsif a[:full_name].include?("/") && !b[:full_name].include?("/")
+        elsif a[:full_name].include?("/") && b[:full_name].exclude?("/")
           1
         else
           a[:full_name] <=> b[:full_name]
@@ -191,25 +205,34 @@ module Bundle
 
       # Step 2: Sort by formula dependency topology.
       topo = Topo.new
-      @formulae.each do |f|
-        deps = (
-          f[:dependencies] \
-          + f[:requirements].map { |req| req["default_formula"] }.compact \
-          - f[:optional_dependencies] \
-          - f[:build_dependencies] \
-        ).uniq
-        topo[f[:full_name]] = deps.map do |dep|
-          ff = @formulae.find { |formula| [formula[:name], formula[:full_name]].include?(dep) }
-          next unless ff
+      formulae.each do |f|
+        topo[f[:name]] = topo[f[:full_name]] = f[:dependencies].map do |dep|
+          ff = formulae_by_name(dep)
+          next if ff.blank?
+          next unless ff[:any_version_installed?]
+
           ff[:full_name]
         end.compact
       end
-      @formulae = topo.tsort.map { |name| @formulae.find { |formula| formula[:full_name] == name } }
+      @formulae = topo.tsort
+                      .map { |name| @formulae_by_full_name[name] || @formulae_by_name[name] }
+                      .uniq { |f| f[:full_name] }
     rescue TSort::Cyclic => e
+      e.message =~ /\["([^"]*)".*"([^"]*)"\]/
+      cycle_first = Regexp.last_match(1)
+      cycle_last = Regexp.last_match(2)
+      odie e.message if !cycle_first || !cycle_last
+
       odie <<~EOS
-        #{e.message}
-        Formulae dependency graph sorting failed (likely due to a circular dependency)!
+        Formulae dependency graph sorting failed (likely due to a circular dependency):
+        #{cycle_first}: #{topo[cycle_first]}
+        #{cycle_last}: #{topo[cycle_last]}
+        Please run the following commands and try again:
+          brew update
+          brew uninstall --ignore-dependencies --force #{cycle_first} #{cycle_last}
+          brew install #{cycle_first} #{cycle_last}
       EOS
     end
+    private_class_method :sort!
   end
 end

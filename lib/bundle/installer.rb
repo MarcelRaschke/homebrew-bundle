@@ -4,29 +4,35 @@ module Bundle
   module Installer
     module_function
 
-    def install(entries)
+    def install(entries, global: false, file: nil, no_lock: false, no_upgrade: false, verbose: false)
       success = 0
       failure = 0
 
       entries.each do |entry|
-        arg = [entry.name]
+        args = [entry.name]
+        options = {}
         verb = "Installing"
         cls = case entry.type
         when :brew
-          arg << entry.options
+          options = entry.options
           Bundle::BrewInstaller
         when :cask
-          arg << entry.options
+          options = entry.options
           Bundle::CaskInstaller
-        when :mac_app_store
-          arg << entry.options[:id]
+        when :mas
+          args << entry.options[:id]
           Bundle::MacAppStoreInstaller
+        when :whalebrew
+          Bundle::WhalebrewInstaller
         when :tap
           verb = "Tapping"
-          arg << entry.options
+          options = entry.options
           Bundle::TapInstaller
         end
-        case cls.install(*arg)
+
+        next if Bundle::Skipper.skip? entry
+
+        case cls.install(*args, **options, no_upgrade: no_upgrade, verbose: verbose)
         when :success
           puts Formatter.success("#{verb} #{entry.name}")
           success += 1
@@ -39,13 +45,20 @@ module Bundle
         end
       end
 
-      if failure.zero?
-        puts Formatter.success("Homebrew Bundle complete! #{success} Brewfile #{Bundle::Dsl.pluralize_dependency(success)} now installed.")
-      else
-        puts Formatter.error("Homebrew Bundle failed! #{failure} Brewfile #{Bundle::Dsl.pluralize_dependency(failure)} failed to install.")
+      unless failure.zero?
+        puts Formatter.error "Homebrew Bundle failed! "\
+                             "#{failure} Brewfile #{Bundle::Dsl.pluralize_dependency(failure)} failed to install."
+        if (lock = Bundle::Locker.lockfile(global: global, file: file)) && lock.exist?
+          puts Formatter.error("Check for differences in your #{lock.basename}!")
+        end
+        return false
       end
 
-      failure.zero?
+      Bundle::Locker.lock(entries, global: global, file: file, no_lock: no_lock)
+
+      puts Formatter.success "Homebrew Bundle complete! "\
+                             "#{success} Brewfile #{Bundle::Dsl.pluralize_dependency(success)} now installed."
+      true
     end
   end
 end

@@ -4,19 +4,22 @@ module Bundle
   module Lister
     module_function
 
-    def list(entries)
+    def list(entries, all: false, casks: false, taps: false, mas: false, whalebrew: false, brews: false)
       entries.each do |entry|
-        puts entry.name if show? entry.type
+        if show?(entry.type, all: all, casks: casks, taps: taps, mas: mas, whalebrew: whalebrew, brews: brews)
+          puts entry.name
+        end
       end
     end
 
-    def self.show?(type)
-      return true if ARGV.include?("--all")
-      return true if ARGV.include?("--casks") && type == :cask
-      return true if ARGV.include?("--taps") && type == :tap
-      return true if ARGV.include?("--mas") && type == :mac_app_store
-      return true if ARGV.include?("--brews") && type == :brew
-      return true if type == :brew && ["--casks", "--taps", "--mas"].none? { |e| ARGV.include?(e) }
+    def self.show?(type, all: false, casks: false, taps: false, mas: false, whalebrew: false, brews: false)
+      return true if all
+      return true if casks && type == :cask
+      return true if taps && type == :tap
+      return true if mas && type == :mas
+      return true if whalebrew && type == :whalebrew
+      return true if brews && type == :brew
+      return true if type == :brew && !casks && !taps && !mas && !whalebrew
     end
   end
 end
