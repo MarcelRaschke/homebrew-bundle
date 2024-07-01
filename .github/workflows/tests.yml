@@ -33,14 +33,14 @@ jobs:
     - run: brew test-bot --only-tap-syntax
 
     - name: Set up Ruby
-      uses: ruby/setup-ruby@d5fb7a202fc07872cb44f00ba8e6197b70cb0c55 # v1.179.0
+      uses: ruby/setup-ruby@1d0e911f615a112e322369596f10ee0b95b010ae # v1.183.0
       with:
         bundler-cache: true
 
     - name: Run RSpec tests
       run: bundle exec rspec
 
-    - uses: codecov/codecov-action@125fc84a9a348dbcf27191600683ec096ec9021c
+    - uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673
       if: always()
 
     - name: Test that installing works
